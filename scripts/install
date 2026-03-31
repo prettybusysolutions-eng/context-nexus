@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# Context Nexus — Install
+# ─────────────────────────────────────────────────────────────────────────────
+# Bootstrap: Python deps, local SQLite storage, OpenClaw plugin registration.
+# Usage: ./install [--python-interp python3]
+# ─────────────────────────────────────────────────────────────────────────────
+set -e
+
+PYTHON="${1:-python3}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_DIR="$(cd "$SCRIPT_DIR/../plugin" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+echo "── Context Nexus Installer ─────────────────────────────"
+
+# ── 1. Python dependencies ──────────────────────────────────────────────────
+echo "[1/5] Checking Python..."
+if ! command -v $PYTHON &>/dev/null; then
+    echo "ERROR: $PYTHON not found"
+    exit 1
+fi
+PY_VERSION=$($PYTHON --version 2>&1 | awk '{print $2}')
+echo "  Python: $PY_VERSION"
+
+# Install packages
+REQUIRED_PKGS="psycopg2-binary"  # for optional postgres adapter
+for pkg in $REQUIRED_PKGS; do
+    $PYTHON -c "import ${pkg%%-*}" 2>/dev/null || $PYTHON -m pip install -q $pkg
+done
+echo "  Dependencies OK"
+
+# ── 2. Bootstrap storage ──────────────────────────────────────────────────────
+echo "[2/5] Bootstrapping SQLite storage..."
+STORAGE_DIR="${CONTEXT_NEXUS_DB_DIR:-$HOME/.openclaw/context-nexus}"
+mkdir -p "$STORAGE_DIR"
+DB_PATH="$STORAGE_DIR/nexus.db"
+echo "  DB path: $DB_PATH"
+
+$PYTHON -c "
+import sys
+sys.path.insert(0, '$PLUGIN_DIR/src')
+from nexus_service import main as _svc
+# Bootstrap by importing and checking storage
+import os
+os.environ['CONTEXT_NEXUS_DB_PATH'] = '$DB_PATH'
+from storage.sqlite_adapter import SQLiteAdapter
+s = SQLiteAdapter('$DB_PATH')
+print('  Schema initialized')
+print('  Storage OK')
+"
+
+# ── 3. Smoke test ────────────────────────────────────────────────────────────
+echo "[3/5] Running smoke test..."
+$PYTHON "$PLUGIN_DIR/src/nexus_service.py" healthcheck '{}'
+echo "  Healthcheck OK"
+
+# ── 4. Register with OpenClaw ────────────────────────────────────────────────
+echo "[4/5] Checking OpenClaw..."
+if command -v openclaw &>/dev/null; then
+    echo "  OpenClaw CLI found"
+    # Copy plugin to openclaw plugins directory
+    OPENCLAW_PLUGIN_DIR="$HOME/.openclaw/plugins/context-nexus"
+    mkdir -p "$OPENCLAW_PLUGIN_DIR"
+    cp -r "$PLUGIN_DIR"/* "$OPENCLAW_PLUGIN_DIR/"
+    echo "  Plugin copied to: $OPENCLAW_PLUGIN_DIR"
+
+    # Register plugin
+    openclaw plugins install "$OPENCLAW_PLUGIN_DIR" 2>/dev/null && echo "  Plugin registered" || true
+else
+    echo "  WARN: OpenClaw CLI not in PATH (install it separately)"
+fi
+
+# ── 5. Summary ───────────────────────────────────────────────────────────────
+echo "[5/5] Install complete!"
+echo ""
+echo "Next steps:"
+echo "  1. Add to ~/.openclaw/openclaw.json plugins.entries (see README)"
+echo "  2. Run: openclaw gateway restart"
+echo "  3. Run: ./scripts/smoke_test"
+echo ""
+echo "DB: $DB_PATH"

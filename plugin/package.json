@@ -1,0 +1,15 @@
+{
+  "name": "@context-nexus/plugin",
+  "version": "0.1.0",
+  "description": "Context Nexus — OpenClaw plugin for persistent memory, observability, and secrets",
+  "main": "src/index.js",
+  "openclaw": {
+    "plugin": {
+      "id": "context-nexus",
+      "version": "0.1.0",
+      "hooks": ["before_prompt_build", "after_tool_call", "session_end", "on_error"],
+      "tools": ["nexus_memory", "nexus_logs", "nexus_secrets", "nexus_replay", "nexus_admin"]
+    }
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,35 @@
+{
+  "id": "context-nexus",
+  "name": "Context Nexus",
+  "description": "Persistent cross-session memory, structured observability, secrets management, and replay for OpenClaw agents. Local-first SQLite by default.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": {
+        "type": "string",
+        "description": "Path to SQLite database file. Default: ~/.openclaw/context-nexus/nexus.db"
+      },
+      "encryptionKey": {
+        "type": "string",
+        "description": "Custom encryption key for secrets. Default: env CONTEXT_NEXUS_ENCRYPTION_KEY"
+      },
+      "sessionScope": {
+        "type": "string",
+        "enum": ["ephemeral", "durable"],
+        "description": "Default scope for session memory. Default: durable",
+        "default": "durable"
+      },
+      "logLevel": {
+        "type": "string",
+        "enum": ["debug", "info", "warn", "error"],
+        "description": "Logging verbosity. Default: info"
+      },
+      "compactInterval": {
+        "type": "number",
+        "description": "Compact memories every N events. Default: 100"
+      }
+    }
+  }
+}
