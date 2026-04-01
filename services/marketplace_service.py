@@ -333,6 +333,14 @@ class MarketplaceService:
 
         return min(score, 1.0)
 
+    def _resolve_split_recipients(self, provider_agent_id: str) -> dict:
+        """Resolve which agent wallet receives each split role."""
+        return {
+            'ops': 'context-nexus-ops',        # Context Nexus network fee
+            'operator': provider_agent_id,     # Service provider's operator
+            'improvement_fund': 'context-nexus-improvement',  # Platform development fund
+        }
+
     def _execute_purchase(self, service: dict, buyer_agent_id: str,
                           budget_agent_id: str, policy: dict) -> dict:
         tx_id = str(uuid.uuid4())
@@ -340,6 +348,7 @@ class MarketplaceService:
         amount = service['price_amount']
         currency = service['price_currency']
         split_table = json.loads(service['split_table'])
+        recipient_map = self._resolve_split_recipients(service['provider_agent_id'])
 
         # Record transaction as pending (off-chain for v0.1)
         self.db.execute("""
@@ -351,11 +360,12 @@ class MarketplaceService:
 
         # Record earnings for each split recipient (off-chain ledger)
         for role, percentage in split_table.items():
+            recipient = recipient_map.get(role, service['provider_agent_id'])
             self.db.execute("""
                 INSERT INTO marketplace_earnings
                 (id, agent_id, role, service_id, gross_amount, currency, net_amount, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, [str(uuid.uuid4()), service['provider_agent_id'], role, service['id'],
+            """, [str(uuid.uuid4()), recipient, role, service['id'],
                   amount, currency, amount * percentage, now])
 
         return {
@@ -365,7 +375,8 @@ class MarketplaceService:
             'service_slug': service['slug'],
             'amount': amount,
             'currency': currency,
-            'split_log': {k: round(v * amount, 4) for k, v in split_table.items()},
+            'split_log': {k: {'recipient': recipient_map.get(k, service['provider_agent_id']),
+                              'amount': round(v * amount, 4)} for k, v in split_table.items()},
             'status': 'pending_settlement'
         }
 
