@@ -8,9 +8,19 @@ import sys
 import json
 import os
 
-# Bootstrap path
-_plugin_dir = os.path.dirname(os.path.abspath(__file__))  # plugin/src
+# Bootstrap path — find the actual project root with storage/, services/
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))  # plugin/src or src
 _context_nexus_root = os.path.dirname(os.path.dirname(_plugin_dir))  # → context-nexus/
+
+# If we're running from ~/.openclaw/plugins/context-nexus/src/ the actual source
+# repo is at the user's workspace projects path — walk up to find it.
+if not os.path.exists(os.path.join(_context_nexus_root, 'storage')):
+    # Try one more level up (plugin root → .openclaw → home)
+    _context_nexus_root = os.path.dirname(_context_nexus_root)
+if not os.path.exists(os.path.join(_context_nexus_root, 'storage')):
+    # Fallback: known source location
+    _context_nexus_root = '/Users/marcuscoarchitect/.openclaw/agents/aurex/workspace/projects/context-nexus'
+
 if _context_nexus_root not in sys.path:
     sys.path.insert(0, _context_nexus_root)
 
@@ -19,6 +29,7 @@ from services.memory_service import MemoryService
 from services.logging_service import LoggingService
 from services.secrets_service import SecretsService, AuthService
 from services.distill_service import DistillService
+from services.marketplace_service import MarketplaceService
 
 # Initialize services
 _db_path = os.environ.get('CONTEXT_NEXUS_DB_PATH') or os.path.expanduser('~/.openclaw/context-nexus/nexus.db')
@@ -30,6 +41,7 @@ _logging = LoggingService(_storage)
 _secrets = SecretsService(_storage)
 _auth = AuthService(_storage)
 _distill = DistillService()
+_marketplace = MarketplaceService(_storage)
 
 
 def _result(data=None, error=None):
@@ -289,6 +301,85 @@ def export_snapshot(params):
     return _result(_storage.export_snapshot())
 
 
+# ── Marketplace ────────────────────────────────────────────────────────────────
+
+def marketplace_list_service(params):
+    return _result(_marketplace.list_service(
+        slug=params['slug'],
+        name=params['name'],
+        description=params.get('description', ''),
+        category=params['category'],
+        pricing_model=params['pricing_model'],
+        price_amount=float(params['price_amount']),
+        price_currency=params.get('price_currency', 'USD'),
+        split_table=params['split_table'],
+        trigger_signals=params['trigger_signals'],
+        provider_agent_id=params.get('provider_agent_id', 'self'),
+    ))
+
+
+def marketplace_get_service(params):
+    return _result(_marketplace.get_service(
+        service_id=params.get('service_id'),
+        slug=params.get('slug'),
+    ))
+
+
+def marketplace_list_services(params):
+    return _result(_marketplace.list_services(
+        category=params.get('category'),
+        status=params.get('status', 'active'),
+        limit=params.get('limit', 50),
+    ))
+
+
+def marketplace_declare_policy(params):
+    return _result(_marketplace.declare_policy(
+        policy_name=params['policy_name'],
+        category=params['category'],
+        max_budget_amount=float(params['max_budget_amount']),
+        budget_currency=params.get('budget_currency', 'USD'),
+        budget_period=params.get('budget_period', 'per_month'),
+        auto_approve_threshold=float(params['auto_approve_threshold']),
+        trigger_signals=params['trigger_signals'],
+        agent_id=params.get('agent_id', 'self'),
+    ))
+
+
+def marketplace_get_policy(params):
+    return _result(_marketplace.get_policy(agent_id=params.get('agent_id', 'self')))
+
+
+def marketplace_buy_service(params):
+    return _result(_marketplace.buy_service(
+        service_id=params['service_id'],
+        buyer_agent_id=params.get('buyer_agent_id', 'self'),
+        budget_agent_id=params.get('budget_agent_id', 'self'),
+    ))
+
+
+def marketplace_list_transactions(params):
+    return _result(_marketplace.list_transactions(
+        status=params.get('status'),
+        limit=params.get('limit', 50),
+    ))
+
+
+def marketplace_my_earnings(params):
+    return _result(_marketplace.my_earnings(
+        agent_id=params.get('agent_id', 'self'),
+        currency=params.get('currency', 'USD'),
+        period=params.get('period', 'per_month'),
+    ))
+
+
+def marketplace_settle_transaction(params):
+    return _result(_marketplace.settle_transaction(
+        transaction_id=params['transaction_id'],
+        tx_hash=params.get('tx_hash', 'off_chain_v0.1'),
+    ))
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 METHOD_MAP = {
@@ -319,6 +410,15 @@ METHOD_MAP = {
     'healthcheck': healthcheck,
     'storage_status': storage_status,
     'export_snapshot': export_snapshot,
+    'marketplace_list_service': marketplace_list_service,
+    'marketplace_get_service': marketplace_get_service,
+    'marketplace_list_services': marketplace_list_services,
+    'marketplace_declare_policy': marketplace_declare_policy,
+    'marketplace_get_policy': marketplace_get_policy,
+    'marketplace_buy_service': marketplace_buy_service,
+    'marketplace_list_transactions': marketplace_list_transactions,
+    'marketplace_my_earnings': marketplace_my_earnings,
+    'marketplace_settle_transaction': marketplace_settle_transaction,
 }
 
 

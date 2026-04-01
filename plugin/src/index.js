@@ -37,7 +37,7 @@ function pythonCall(method, params = {}) {
   });
 }
 
-function register Hooks({ registerHook, log }) {
+function registerHooks({ registerHook, log }) {
   // ── before_prompt_build ─────────────────────────────────────────────────
   registerHook('before_prompt_build', async ({ session, messages, env }) => {
     try {
@@ -307,4 +307,4 @@ function registerTools({ registerTool }) {
   });
 }
 
-module.exports = { registerHooks, registerTools };
+module.exports = { register: registerHooks, registerTools };

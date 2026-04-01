@@ -125,6 +125,33 @@ CREATE INDEX IF NOT EXISTS idx_token_status ON token_registry(status);
 class SQLiteAdapter:
     """Thread-safe SQLite adapter with automatic schema init."""
 
+    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        """Execute SQL and commit. Returns cursor."""
+        with self.transaction() as conn:
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur
+
+    def fetchone(self, sql: str, params: tuple = ()) -> Optional[dict]:
+        """Execute SQL and return first row as dict."""
+        with self.transaction() as conn:
+            cur = conn.execute(sql, params)
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cols = [d[0] for d in cur.description]
+            return dict(zip(cols, row))
+
+    def fetchall(self, sql: str, params: tuple = ()) -> list:
+        """Execute SQL and return all rows as dicts."""
+        with self.transaction() as conn:
+            cur = conn.execute(sql, params)
+            rows = cur.fetchall()
+            if not rows:
+                return []
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in rows]
+
     def __init__(self, db_path: str = None):
         if db_path is None:
             base = os.environ.get('CONTEXT_NEXUS_DB_DIR', os.path.expanduser('~/.openclaw/context-nexus'))
