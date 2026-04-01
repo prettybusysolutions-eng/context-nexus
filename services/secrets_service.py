@@ -65,25 +65,35 @@ class SecretsService:
         except Exception:
             return None  # Fail closed
 
-    def store(self, name: str, value: str, metadata: dict = None) -> bool:
+    def store(self, name: str, value: str, metadata: dict = None, caller_id: str = None) -> bool:
         """Store an encrypted secret."""
         encrypted = self._encrypt(value)
-        return self._s.secret_store(name=name, encrypted_value=encrypted, metadata=metadata or {})
+        result = self._s.secret_store(name=name, encrypted_value=encrypted, metadata=metadata or {})
+        self._s._audit_log_access('store', 'secret', name, caller_id=caller_id, success=result)
+        return result
 
-    def get(self, name: str) -> Optional[str]:
+    def get(self, name: str, caller_id: str = None) -> Optional[str]:
         """Retrieve and decrypt a secret. Fail-closed on error."""
         row = self._s.secret_get(name=name)
         if not row:
+            self._s._audit_log_access('get', 'secret', name, caller_id=caller_id, success=False, error='not_found')
             return None
-        return self._decrypt(row.get('encrypted_value', ''))
+        plaintext = self._decrypt(row.get('encrypted_value', ''))
+        if plaintext is None:
+            self._s._audit_log_access('get', 'secret', name, caller_id=caller_id, success=False, error='decrypt_failed')
+            return None
+        self._s._audit_log_access('get', 'secret', name, caller_id=caller_id, success=True)
+        return plaintext
 
     def list_names(self) -> list:
         """List secret names and metadata only."""
         return self._s.secret_list_names()
 
-    def delete(self, name: str) -> bool:
+    def delete(self, name: str, caller_id: str = None) -> bool:
         """Delete a secret."""
-        return self._s.secret_delete(name)
+        result = self._s.secret_delete(name)
+        self._s._audit_log_access('delete', 'secret', name, caller_id=caller_id, success=result)
+        return result
 
     def rotate_metadata(self, name: str, metadata: dict) -> bool:
         """Update secret metadata without changing the value."""

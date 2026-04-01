@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS secrets (
 );
 CREATE INDEX IF NOT EXISTS idx_secrets_name ON secrets(name);
 
+CREATE TABLE IF NOT EXISTS access_audit_log (
+    id TEXT PRIMARY KEY,
+    operation TEXT NOT NULL,           -- get, store, delete, rekey
+    resource_type TEXT NOT NULL,      -- secret, memory, token
+    resource_name TEXT NOT NULL,      -- name of the resource
+    caller_id TEXT,                  -- agent or user ID if known
+    success INTEGER NOT NULL DEFAULT 1,
+    error TEXT,                       -- error message if failed
+    accessed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_accessed_at ON access_audit_log(accessed_at);
+CREATE INDEX IF NOT EXISTS idx_audit_resource ON access_audit_log(resource_type, resource_name);
+
 CREATE TABLE IF NOT EXISTS checkpoints (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -615,7 +628,41 @@ class SQLiteAdapter:
         # Consider expired if < 60 seconds remaining
         return (exp - datetime.now(timezone.utc)).total_seconds() < 60
 
-    # ── Secrets ───────────────────────────────────────────────────────────────
+    # ── Access Audit Log ─────────────────────────────────────────────────────
+
+    def _audit_log_access(self, operation: str, resource_type: str,
+                          resource_name: str, caller_id: str = None,
+                          success: bool = True, error: str = None):
+        """
+        Append an entry to the access audit log.
+        Fails silently — audit logging must never break the main operation.
+        """
+        try:
+            import uuid
+            entry_id = uuid.uuid4().hex
+            with self.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO access_audit_log (id, operation, resource_type, resource_name, caller_id, success, error, accessed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (entry_id, operation, resource_type, resource_name,
+                     caller_id or 'unknown', 1 if success else 0, error, self.now_iso())
+                )
+        except Exception:
+            pass  # Never let audit log failure affect main operations
+
+    def get_audit_log(self, resource_type: str = None, limit: int = 100) -> list:
+        """Retrieve recent audit log entries, optionally filtered by resource type."""
+        query = "SELECT * FROM access_audit_log"
+        params = []
+        if resource_type:
+            query += " WHERE resource_type = ?"
+            params.append(resource_type)
+        query += " ORDER BY accessed_at DESC LIMIT ?"
+        params.append(limit)
+        conn = self._conn()
+        rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    # ── Secrets ─────────────────────────────────────────────────────────────
 
     def secret_store(self, name: str, encrypted_value: str,
                      metadata: dict = None) -> bool:

@@ -181,12 +181,13 @@ def secret_store(params):
         name=params['name'],
         value=params['value'],
         metadata=params.get('metadata', {}),
+        caller_id='cli',
     )
     return _result({'ok': ok})
 
 
 def secret_get(params):
-    val = _secrets.get(name=params['name'])
+    val = _secrets.get(name=params['name'], caller_id='cli')
     return _result({'value': val})
 
 
@@ -195,7 +196,13 @@ def secret_list(params):
 
 
 def secret_delete(params):
-    return _result({'ok': _secrets.delete(name=params['name'])})
+    return _result({'ok': _secrets.delete(name=params['name'], caller_id='cli')})
+
+def secret_audit_log(params):
+    """Get the secrets access audit log. Usage: nexus_service.py secret_audit_log '{"limit": 100}'"""
+    limit = params.get('limit', 100)
+    resource_type = params.get('resource_type', None)  # 'secret' to filter only secret accesses
+    return _result(_secrets._s.get_audit_log(resource_type=resource_type, limit=limit))
 
 
 # ── Token registry ────────────────────────────────────────────────────────────
@@ -400,6 +407,7 @@ METHOD_MAP = {
     'secret_get': secret_get,
     'secret_list': secret_list,
     'secret_delete': secret_delete,
+    'secret_audit_log': secret_audit_log,
     'token_set': token_set,
     'token_status': token_status,
     'token_classify_error': token_classify_error,
