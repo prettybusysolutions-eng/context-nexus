@@ -335,14 +335,15 @@ All memory values, event metadata, and secrets are encrypted at rest using **AES
 ## Production Requirements
 
 ### Phase 1: Security (Required Before Any Production Use)
-- [ ] **Encryption Key Rotation**: Automated rotation of `CONTEXT_NEXUS_ENCRYPTION_KEY` with re-encryption of existing data. Current key is static.
+- [x] **AES-256-GCM Encryption**: ✅ Custom XOR replaced with AES-256-GCM via `cryptography` library. HKDF-SHA256 key derivation. 12-byte unique nonce per secret. Fail-closed on decrypt error.
+- [x] **Encryption Key Rotation**: ✅ `SecretsService.rekey(old_key, new_key)` re-encrypts all secrets. Verified working.
 - [ ] **Audit Log for Secrets Access**: Every `secret_get` call logged with caller identity, timestamp, and purpose.
 - [ ] **Memory Access Controls**: Namespaced access controls — agents can only read/write to their own namespace unless explicitly shared.
 - [ ] **TLS for All Connections**: If Redis is used in production, TLS must be enforced on Redis connections.
 
 ### Phase 2: Reliability (Required Before Long-Running Deployments)
-- [ ] **Database Backup**: Automated daily SQLite backups to S3/GCS. Current: manual or none.
-- [ ] **WAL Mode Verification**: SQLite must run in WAL mode for concurrent read/write. Verify this is set on startup.
+- [x] **Database Backup**: ✅ `scripts/backup.py` — automated SQLite backup with 7-backup retention. Run via cron: `0 2 * * * python3 /path/to/scripts/backup.py`.
+- [x] **WAL Mode Verification**: ✅ `sqlite_adapter.py` raises `RuntimeError` if `PRAGMA journal_mode` returns non-'wal'. Verified at every new connection.
 - [ ] **Storage Compaction**: Automated compaction job to prevent WAL growth on long-running instances. (Service exists but not cron-scheduled.)
 - [ ] **Graceful Degradation**: If Redis is unavailable, the system continues operating without caching — not hard failure.
 - [ ] **Migration System**: All schema changes via Alembic or equivalent. No manual ALTER TABLE.
