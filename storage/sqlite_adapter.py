@@ -169,6 +169,13 @@ class SQLiteAdapter:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
+            # Verify WAL mode actually took effect
+            actual = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if actual != 'wal':
+                raise RuntimeError(
+                    f"SQLite journal_mode is '{actual}', must be 'wal'. "
+                    "WAL mode is required for concurrent read/write and data durability."
+                )
             self._local.conn = conn
         return conn
 
@@ -649,6 +656,22 @@ class SQLiteAdapter:
             "SELECT name, metadata_json, updated_at FROM secrets ORDER BY name").fetchall()
         return [{'name': r['name'], 'updated_at': r['updated_at'],
                  'metadata': json.loads(r['metadata_json'])} for r in rows]
+
+    def _secret_list_all(self) -> list:
+        """List all secret records including encrypted values. Internal use only."""
+        conn = self._conn()
+        rows = conn.execute("SELECT id, name, encrypted_value, created_at, updated_at FROM secrets").fetchall()
+        return [{'id': r['id'], 'name': r['name'], 'encrypted_value': r['encrypted_value'],
+                 'created_at': r['created_at'], 'updated_at': r['updated_at']} for r in rows]
+
+    def _secret_update(self, secret_id: str, encrypted_value: str) -> bool:
+        """Update a secret's encrypted value. Internal use for key rotation."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE secrets SET encrypted_value=?, updated_at=? WHERE id=?",
+                (encrypted_value, self.now_iso(), secret_id)
+            )
+        return True
 
     # ── Storage ops ───────────────────────────────────────────────────────────
 

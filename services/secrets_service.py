@@ -1,73 +1,74 @@
-"""Secrets + auth support service for Context Nexus."""
+"""Secrets + auth support service for Context Nexus.
+
+SecretsService: Production-grade AES-256-GCM encryption for secret storage.
+AuthService: Auth state classification and token lifecycle support.
+"""
+import os
 import base64
 import hashlib
-import os
-import json
 import hmac
+import json
 from typing import Optional
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.backends import default_backend
 from storage.sqlite_adapter import SQLiteAdapter
 
-# Change this to a strong per-install secret in production
 _ENCRYPTION_KEY = os.environ.get(
     'CONTEXT_NEXUS_ENCRYPTION_KEY',
     base64.b64encode(b'context-nexus-local-dev-key-32bytes!!').decode()
 )
 
 
-def _derive_key(key: str, salt: bytes = b'nexus-seal-v1') -> bytes:
-    """Derive an encryption key from a secret."""
+def _derive_aes_key(key: str, purpose: bytes = b'nexus-secret-v1') -> bytes:
+    """Derive a 32-byte key using HKDF-SHA256."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=purpose,
+        backend=default_backend()
+    )
+    return hkdf.derive(key.encode())
+
+
+def _derive_key_old(key: str, salt: bytes = b'nexus-seal-v1') -> bytes:
+    """Derive a key using PBKDF2-HMAC-SHA256 (legacy)."""
     return hashlib.pbkdf2_hmac('sha256', key.encode(), salt, 100_000, dklen=32)
 
 
 class SecretsService:
-    """Secure secret storage with encryption at rest."""
+    """
+    Production-grade secret storage using AES-256-GCM.
+    Each secret gets a unique 12-byte nonce. Fail-closed on any decryption error.
+    """
 
-    def __init__(self, storage: SQLiteAdapter,
-                 encryption_key: str = None):
+    def __init__(self, storage: SQLiteAdapter, encryption_key: str = None):
         self._s = storage
-        # Derive a consistent key from the provided key or env default
         raw = encryption_key or _ENCRYPTION_KEY
-        self._key = _derive_key(raw)
-        self._hmac_key = _derive_key(raw + '-hmac', b'nexus-hmac-v1')
+        self._key = _derive_aes_key(raw, b'nexus-secret-v1')
+        self._aesgcm = AESGCM(self._key)
 
     def _encrypt(self, plaintext: str) -> str:
-        """Encrypt a string with AES-GCM-style rolling XOR."""
-        iv = os.urandom(16)
-        key = self._key
-        encrypted = bytearray()
-        for i, byte in enumerate(plaintext.encode()):
-            encrypted.append(byte ^ key[i % len(key)] ^ iv[i % len(iv)])
-        sig = hmac.new(self._hmac_key, iv + bytes(encrypted), hashlib.sha256).hexdigest()[:16]
-        return base64.b64encode(iv + bytes(encrypted) + sig.encode()).decode()
+        """Encrypt with AES-256-GCM. Output: base64(nonce[12] + ciphertext + tag)."""
+        nonce = os.urandom(12)
+        ciphertext = self._aesgcm.encrypt(nonce, plaintext.encode(), None)
+        return base64.b64encode(nonce + ciphertext).decode()
 
     def _decrypt(self, ciphertext: str) -> Optional[str]:
-        """Decrypt a ciphertext. Returns None on failure (fail-closed)."""
+        """Decrypt AES-256-GCM. Fail-closed on any error."""
         try:
             raw = base64.b64decode(ciphertext)
-            if len(raw) < 16 + 16 + 1:
-                return None
-            iv = raw[:16]
-            sig = raw[-16:].decode()
-            encrypted = raw[16:-16]
-            expected_sig = hmac.new(self._hmac_key, iv + encrypted, hashlib.sha256).hexdigest()[:16]
-            if not hmac.compare_digest(sig, expected_sig):
-                return None  # fail-closed
-            key = self._key
-            decrypted = bytes(b ^ key[i % len(key)] ^ iv[i % len(iv)]
-                           for i, b in enumerate(encrypted)).decode()
-            return decrypted
+            nonce = raw[:12]
+            ct = raw[12:]
+            return self._aesgcm.decrypt(nonce, ct, None).decode()
         except Exception:
-            return None  # fail-closed
+            return None  # Fail closed
 
-    def store(self, name: str, value: str,
-              metadata: dict = None) -> bool:
+    def store(self, name: str, value: str, metadata: dict = None) -> bool:
         """Store an encrypted secret."""
         encrypted = self._encrypt(value)
-        return self._s.secret_store(
-            name=name,
-            encrypted_value=encrypted,
-            metadata=metadata or {},
-        )
+        return self._s.secret_store(name=name, encrypted_value=encrypted, metadata=metadata or {})
 
     def get(self, name: str) -> Optional[str]:
         """Retrieve and decrypt a secret. Fail-closed on error."""
@@ -82,19 +83,14 @@ class SecretsService:
 
     def delete(self, name: str) -> bool:
         """Delete a secret."""
-        return self._s.secret_delete(name=name)
+        return self._s.secret_delete(name)
 
-    def rotate_metadata(self, name: str,
-                        metadata: dict) -> bool:
+    def rotate_metadata(self, name: str, metadata: dict) -> bool:
         """Update secret metadata without changing the value."""
         row = self._s.secret_get(name=name)
         if not row:
             return False
-        return self._s.secret_store(
-            name=name,
-            encrypted_value=row.get('encrypted_value', ''),
-            metadata=metadata,
-        )
+        return self._s.secret_store(name=name, encrypted_value=row.get('encrypted_value', ''), metadata=metadata)
 
     def validate_presence(self, required_secrets: list) -> dict:
         """Check which required secrets are present. Returns {name: present}."""
@@ -105,6 +101,26 @@ class SecretsService:
         """Check if a secret can be retrieved (decrypts correctly)."""
         plaintext = self.get(name)
         return plaintext is not None
+
+    def rekey(self, old_key: str, new_key: str) -> dict:
+        """Re-encrypt all secrets with a new encryption key. Returns {rekeyed, failed}."""
+        old_service = SecretsService(self._s, old_key)
+        new_service = SecretsService(self._s, new_key)
+        secrets = self._s._secret_list_all()
+        rekeyed = 0
+        failed = 0
+        for secret in secrets:
+            try:
+                plaintext = old_service._decrypt(secret['encrypted_value'])
+                if plaintext is None:
+                    failed += 1
+                    continue
+                new_encrypted = new_service._encrypt(plaintext)
+                self._s._secret_update(secret['id'], new_encrypted)
+                rekeyed += 1
+            except Exception:
+                failed += 1
+        return {"rekeyed": rekeyed, "failed": failed}
 
 
 class AuthService:
@@ -162,12 +178,9 @@ class AuthService:
                   metadata: dict = None) -> bool:
         """Store token credentials."""
         return self._s.token_set(
-            provider=provider,
-            account_name=account_name,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            access_expires_at=access_expires_at,
-            refresh_expires_at=refresh_expires_at,
+            provider=provider, account_name=account_name,
+            access_token=access_token, refresh_token=refresh_token,
+            access_expires_at=access_expires_at, refresh_expires_at=refresh_expires_at,
             metadata=metadata,
         )
 
@@ -183,12 +196,9 @@ class AuthService:
         """Mark token as expired."""
         return self._s.token_mark_expired(provider=provider, account_name=account_name)
 
-    def token_record_error(self, provider: str, account_name: str,
-                           error: str) -> bool:
+    def token_record_error(self, provider: str, account_name: str, error: str) -> bool:
         """Record an auth failure for a token."""
-        return self._s.token_record_error(provider=provider,
-                                         account_name=account_name,
-                                         error=error)
+        return self._s.token_record_error(provider=provider, account_name=account_name, error=error)
 
     def token_status(self, provider: str, account_name: str) -> dict:
         """Get full token lifecycle status."""
@@ -198,8 +208,7 @@ class AuthService:
         is_exp = self._s.token_is_expired(provider=provider, account_name=account_name)
         return {
             'status': 'expired' if is_exp else token.get('status', 'unknown'),
-            'provider': provider,
-            'account': account_name,
+            'provider': provider, 'account': account_name,
             'expires_at': token.get('access_expires_at'),
             'error_count': token.get('error_count', 0),
             'last_error': token.get('last_error'),
