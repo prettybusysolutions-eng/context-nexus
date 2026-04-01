@@ -337,7 +337,7 @@ All memory values, event metadata, and secrets are encrypted at rest using **AES
 ### Phase 1: Security (Required Before Any Production Use)
 - [x] **AES-256-GCM Encryption**: ✅ Custom XOR replaced with AES-256-GCM via `cryptography` library. HKDF-SHA256 key derivation. 12-byte unique nonce per secret. Fail-closed on decrypt error.
 - [x] **Encryption Key Rotation**: ✅ `SecretsService.rekey(old_key, new_key)` re-encrypts all secrets. Verified working.
-- [ ] **Audit Log for Secrets Access**: Every `secret_get` call logged with caller identity, timestamp, and purpose.
+- [x] **Audit Log for Secrets Access**: ✅ `access_audit_log` table records every get/store/delete with caller_id, success, error, timestamp. CLI: `nexus_service.py secret_audit_log '{"limit":100}'`.
 - [ ] **Memory Access Controls**: Namespaced access controls — agents can only read/write to their own namespace unless explicitly shared.
 - [ ] **TLS for All Connections**: If Redis is used in production, TLS must be enforced on Redis connections.
 
