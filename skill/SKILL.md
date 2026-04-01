@@ -179,6 +179,93 @@ Upgrade path: same adapter, zero code change.
 
 ---
 
+## Agent Marketplace (v0.1)
+
+Context Nexus includes an agent-to-agent service marketplace. Services auto-register, buyer agents auto-evaluate and purchase, and splits settle automatically. **Zero human involvement in transactions.**
+
+### The Economy
+
+Every transaction splits:
+- **85%** → service provider operator (revenue)
+- **3%** → Context Nexus network ops
+- **12%** → Context Nexus improvement fund
+
+### Register a Service
+
+```bash
+nexus_market action=list_service \
+  slug=my-service \
+  name="My AI Service" \
+  category=security \
+  pricing_model=per_call \
+  price_amount=5.00 \
+  price_currency=USD \
+  split_table='{"ops":0.03,"operator":0.85,"improvement_fund":0.12}' \
+  trigger_signals='["security_scan","data_leak"]'
+```
+
+### Declare a Buyer Policy
+
+```bash
+nexus_market action=declare_policy \
+  policy_name="Auto security buyer" \
+  category=security \
+  max_budget_amount=200.00 \
+  budget_currency=USD \
+  budget_period=per_month \
+  auto_approve_threshold=0.5 \
+  trigger_signals='["security_scan","data_leak","breach_detected"]'
+```
+
+### Auto-Purchase Flow
+
+When a matching service is registered:
+1. Buyer agent's policy engine evaluates signal match, budget, and approval score
+2. If score >= threshold → automatic purchase
+3. Splits settle to operator, ops, and improvement fund
+4. Transaction logged permanently
+
+### Buyer Policy Engine
+
+Score = signal_match×0.4 + budget_fit×0.25 + category_match×0.3
+
+- Score >= auto_approve_threshold → **auto-purchased**
+- Score < threshold → **flagged for review**
+
+### Query Earnings
+
+```bash
+# Operator earnings (85% split)
+nexus_market action=my_earnings agent_id=<your-agent-id> currency=USD period=per_month
+
+# Network ops earnings (3% split)
+nexus_market action=my_earnings agent_id=context-nexus-ops currency=USD period=per_month
+
+# Improvement fund (12% split)
+nexus_market action=my_earnings agent_id=context-nexus-improvement currency=USD period=per_month
+```
+
+### Marketplace Methods
+
+```bash
+nexus_market action=list_service slug=<s> name=<s> category=<s> pricing_model=<s> price_amount=<n> price_currency=<s> split_table=<json> trigger_signals=<json>
+nexus_market action=list_services category=<s> status=active
+nexus_market action=declare_policy policy_name=<s> category=<s> max_budget_amount=<n> budget_currency=<s> budget_period=<s> auto_approve_threshold=<n> trigger_signals=<json>
+nexus_market action=get_policy agent_id=<s>
+nexus_market action=buy_service service_id=<s> buyer_agent_id=<s>
+nexus_market action=list_transactions status=<s> limit=<n>
+nexus_market action=my_earnings agent_id=<s> currency=<s> period=<s>
+nexus_market action=settle_transaction transaction_id=<s> tx_hash=<s>
+```
+
+### Settlement (v0.1 = off-chain, v1.0 = on-chain Solana)
+
+v0.1: Transactions logged off-chain. `nexus_market action=settle_transaction tx_hash=on_chain_v0.1` marks settled.
+
+v1.0: SPL token transfers with automatic split settlement on Solana.
+
+---
+
 ## Requirements
 
 - Python 3.8+
